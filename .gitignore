@@ -1,0 +1,96 @@
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# Compiled class files
+/**/*.class
+
+# Log files
+*.log
+*.out
+*.err
+
+# IDE Directories and Settings
+/.idea/
+/.vscode/
+*.iml
+*.ipr
+*.iws
+/.project
+/.classpath
+/.settings/
+
+# Maven
+/target/
+/build/
+*.mvn
+.mvn/wrapper/maven-wrapper.jar
+
+# Gradle
+/build/
+/.gradle/
+.gradle/
+/out/
+*.jar
+*.war
+*.ear
+*.class
+*.log
+.gradle/
+!gradle-wrapper.jar
+build/
+
+# Spring Boot Properties and Sensitive Files
+application*.properties
+application*.yml
+application*.yaml
+.env
+.secret
+/secrets/
+
+# OS and Editor-specific files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IntelliJ IDEA Module Files
+*.iml
+*.ipr
+*.iws
+
+# Eclipse Project Files
+/.classpath
+/.project
+/.settings/
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# STS (Spring Tool Suite)
+/.springBeans/
+
+# Logs
+logs/
+*.log
+*.out
+*.err
+
+# Generated files
+/bin/
+/.build/
+
+# Test reports
+/test-output/
+/surefire-reports/
+
+# Dependency directories
+/lib/
+/node_modules/
+
