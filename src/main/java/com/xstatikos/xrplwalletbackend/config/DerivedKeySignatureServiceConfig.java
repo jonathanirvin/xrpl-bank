@@ -8,12 +8,20 @@ import org.xrpl.xrpl4j.crypto.ServerSecret;
 @Configuration
 public class DerivedKeySignatureServiceConfig {
 	@Value("${app.derived-key-signature-service-secret}")
-	private String secret;
+	private String customerSecret;
+
+	@Value("${app.bank-fee-fund-derived-key-signature-service-secret}")
+	private String bankFeeFundSecret;
 
 	@Bean
-	public ServerSecret serverSecret() {
+	public ServerSecret customerSecret() {
 		// Convert to bytes. Ensure serverSecretString is at least 32 bytes for best security.
-		return ServerSecret.of( secret.getBytes() );
+		return ServerSecret.of( customerSecret.getBytes() );
+	}
+
+	@Bean
+	public ServerSecret bankFeeFundSecret() {
+		return ServerSecret.of( bankFeeFundSecret.getBytes() );
 	}
 
 }

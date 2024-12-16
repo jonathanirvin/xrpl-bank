@@ -6,8 +6,10 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.xrpl.xrpl4j.model.transactions.Address;
 
@@ -17,6 +19,8 @@ import java.time.Instant;
 @Setter
 @Entity
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Table(name = "bank_accounts")
 public class BankAccount {
 	@Id
@@ -40,8 +44,5 @@ public class BankAccount {
 
 	@Column(nullable = false)
 	private Instant updated_at = Instant.now();
-
-	public BankAccount() {
-	}
-
+	
 }

@@ -1,19 +1,20 @@
 package com.xstatikos.xrplwalletbackend.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.xstatikos.xrplwalletbackend.model.UserProfile;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.io.Serializable;
 
-@JsonInclude(JsonInclude.Include.NON_EMPTY)
+@Getter
+@Setter
 public class UserProfileResource implements Serializable {
 	private final String email;
+	private final Long id;
 
 	public UserProfileResource( UserProfile userProfile ) {
+		this.id = userProfile.getId();
 		this.email = userProfile.getEmail();
 	}
 
-	public String getEmail() {
-		return this.email;
-	}
 }

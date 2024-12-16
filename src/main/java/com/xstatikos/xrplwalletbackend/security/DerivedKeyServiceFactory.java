@@ -10,20 +10,32 @@ import org.xrpl.xrpl4j.crypto.signing.bc.BcDerivedKeySignatureService;
 
 @Component
 public class DerivedKeyServiceFactory {
-	private final ServerSecret serverSecret;
+	private final ServerSecret customerSecret;
+	private final ServerSecret bankFeeFundSecret;
 
-	public DerivedKeyServiceFactory( ServerSecret serverSecret ) {
-		this.serverSecret = serverSecret;
+
+	public DerivedKeyServiceFactory( ServerSecret customerSecret, ServerSecret bankFeeFundSecret ) {
+		this.customerSecret = customerSecret;
+		this.bankFeeFundSecret = bankFeeFundSecret;
 	}
 
-	public SignatureService<PrivateKeyReference> derivedKeysSignatureService() {
-		return new BcDerivedKeySignatureService( () -> serverSecret );
+	public SignatureService<PrivateKeyReference> derivedKeysSignatureServiceForCustomer() {
+		return new BcDerivedKeySignatureService( () -> customerSecret );
 	}
 
 	// derive public key based on server secret and wallet identifer
-	public PublicKey derivePublicKey( String walletIdentifier ) {
+	public PublicKey derivePublicKeyForCustomer( String walletIdentifier ) {
 		PrivateKeyReference ref = createReference( walletIdentifier );
-		return derivedKeysSignatureService().derivePublicKey( ref );
+		return derivedKeysSignatureServiceForCustomer().derivePublicKey( ref );
+	}
+
+	public SignatureService<PrivateKeyReference> derivedKeysSignatureServiceForBankFeeFund() {
+		return new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
+	}
+
+	public PublicKey derivePublicKeyForBankFeeFund( String walletIdentifier ) {
+		PrivateKeyReference ref = createReference( walletIdentifier );
+		return derivedKeysSignatureServiceForBankFeeFund().derivePublicKey( ref );
 	}
 
 	// derive private key reference based on the server secret and wallet identifier
@@ -31,7 +43,7 @@ public class DerivedKeyServiceFactory {
 		return new PrivateKeyReference() {
 			@Override
 			public String keyIdentifier() {
-				return keyIdentifier();
+				return walletIdentifier;
 			}
 
 			@Override

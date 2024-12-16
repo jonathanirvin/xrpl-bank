@@ -4,6 +4,6 @@ import com.xstatikos.xrplwalletbackend.dto.BankAccountRequest;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
 
 public interface BankAccountService {
-	BankAccountResource createNewBankAccount( BankAccountRequest bankAccountRequest );
+	BankAccountResource createNewBankAccount( Long userId, BankAccountRequest bankAccountRequest ) throws Exception;
 
 }

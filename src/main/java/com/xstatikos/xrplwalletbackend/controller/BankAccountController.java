@@ -2,9 +2,14 @@ package com.xstatikos.xrplwalletbackend.controller;
 
 import com.xstatikos.xrplwalletbackend.dto.BankAccountRequest;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
+import com.xstatikos.xrplwalletbackend.dto.UserProfileResource;
 import com.xstatikos.xrplwalletbackend.service.BankAccountService;
+import com.xstatikos.xrplwalletbackend.service.UserProfileService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,19 +18,31 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/bank-accounts")
 public class BankAccountController {
-	private final BankAccountService bankAccountService;
 
-	public BankAccountController( BankAccountService bankAccountService ) {
+	private final BankAccountService bankAccountService;
+	private final UserProfileService userProfileService;
+
+	public BankAccountController( BankAccountService bankAccountService, UserProfileService userProfileService ) {
 		this.bankAccountService = bankAccountService;
+		this.userProfileService = userProfileService;
 	}
 
 	@PostMapping("/create")
-	public ResponseEntity<BankAccountResource> createBankAccount( @RequestBody @Valid BankAccountRequest bankAccountRequest ) {
-		// TODO: check to make sure the userId in the request matches the user Id for the principal.
-		// Throw 403 Forbidden 
+	public ResponseEntity<BankAccountResource> createBankAccount( @AuthenticationPrincipal UserDetails userDetails, @RequestBody @Valid BankAccountRequest bankAccountRequest ) throws Exception {
 
-		BankAccountResource bankAccountResource = bankAccountService.createNewBankAccount( bankAccountRequest );
-		return ResponseEntity.ok( bankAccountResource );
+		if ( userDetails.isEnabled() && userDetails.getUsername() != null ) {
+
+			UserProfileResource userProfileResource = userProfileService.getUserByEmail( userDetails.getUsername() );
+			if ( userProfileResource != null ) {
+				BankAccountResource bankAccountResource = bankAccountService.createNewBankAccount( userProfileResource.getId(), bankAccountRequest );
+				return ResponseEntity.ok( bankAccountResource );
+			} else {
+				throw new AccessDeniedException( "User not found" );
+			}
+
+		} else {
+			throw new AccessDeniedException( "User not found" );
+		}
 
 	}
 

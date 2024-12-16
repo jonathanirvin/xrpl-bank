@@ -8,8 +8,16 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
+@Getter
+@Setter
 @Entity
+@AllArgsConstructor
+@NoArgsConstructor
 @Table(name = "users")
 public class UserProfile {
 
@@ -25,27 +33,9 @@ public class UserProfile {
 	@NotBlank
 	private String password;
 
-	public UserProfile() { }
-
 	public UserProfile( String email, String password ) {
 		this.email = email;
 		this.password = password;
-	}
-
-	public String getEmail() {
-		return email;
-	}
-
-	public void setEmail( String Email ) {
-		this.email = email;
-	}
-
-	public void setPassword( String password ) {
-		this.password = password;
-	}
-
-	public String getPassword() {
-		return this.password;
 	}
 
 }
