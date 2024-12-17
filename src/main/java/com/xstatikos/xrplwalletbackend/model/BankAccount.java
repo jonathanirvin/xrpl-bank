@@ -12,11 +12,12 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.xrpl.xrpl4j.model.transactions.Address;
+import org.xrpl.xrpl4j.model.transactions.XAddress;
 
 import java.time.Instant;
 
-@Getter
 @Setter
+@Getter
 @Entity
 @Builder
 @NoArgsConstructor
@@ -37,12 +38,31 @@ public class BankAccount {
 	private String walletIdentifier;
 
 	@Column(nullable = false, unique = true)
-	private Address xrplAddress;
+	private String classicAddress;
+
+	@Column(nullable = false, unique = true)
+	private String xAddress;
 
 	@Column(nullable = false)
 	private Instant created_at = Instant.now();
 
 	@Column(nullable = false)
 	private Instant updated_at = Instant.now();
-	
+
+	public void setClassicAddress( Address classicAddress ) {
+		this.classicAddress = classicAddress.value();
+	}
+
+	public void setXAddress( XAddress xAddress ) {
+		this.xAddress = xAddress.value();
+	}
+
+	public Address getClassicAddress() {
+		return Address.of( this.classicAddress );
+	}
+
+	public XAddress getXAddress() {
+		return XAddress.of( this.xAddress );
+	}
+
 }
