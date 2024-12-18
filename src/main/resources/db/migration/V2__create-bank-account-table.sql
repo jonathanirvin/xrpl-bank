@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS bank_accounts
 	wallet_identifier VARCHAR(255) NOT NULL UNIQUE,
 	classic_address   VARCHAR(255) NOT NULL UNIQUE,
 	x_address         VARCHAR(255) NOT NULL UNIQUE,
-	created_at        TIMESTAMP    NOT NULL DEFAULT NOW(),
-	updated_at        TIMESTAMP    NOT NULL DEFAULT NOW()
+	balance           BIGINT       NOT NULL,
+	created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+	updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 )

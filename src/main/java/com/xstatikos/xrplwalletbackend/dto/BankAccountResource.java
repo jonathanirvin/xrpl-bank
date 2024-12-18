@@ -4,6 +4,9 @@ import lombok.Getter;
 import lombok.Setter;
 import org.xrpl.xrpl4j.model.transactions.Address;
 import org.xrpl.xrpl4j.model.transactions.XAddress;
+import org.xrpl.xrpl4j.model.transactions.XrpCurrencyAmount;
+
+import java.time.Instant;
 
 @Getter
 @Setter
@@ -12,7 +15,8 @@ public class BankAccountResource {
 	private String accountType;
 	private Address classicAddress;
 	private XAddress xAddress;
-	private String createdAt;
-	private String updatedAt;
+	private XrpCurrencyAmount balance;
+	private Instant createdAt;
+	private Instant updatedAt;
 
 }

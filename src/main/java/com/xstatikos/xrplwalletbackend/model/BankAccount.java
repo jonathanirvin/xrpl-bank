@@ -1,10 +1,13 @@
 package com.xstatikos.xrplwalletbackend.model;
 
+import com.google.common.primitives.UnsignedLong;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -44,10 +47,25 @@ public class BankAccount {
 	private String xAddress;
 
 	@Column(nullable = false)
-	private Instant created_at = Instant.now();
+	private UnsignedLong balance;
+
+	@Column(nullable = false, updatable = false)
+	private Instant createdAt;
 
 	@Column(nullable = false)
-	private Instant updated_at = Instant.now();
+	private Instant updatedAt;
+
+	@PrePersist
+	public void prePersist() {
+		Instant now = Instant.now();
+		this.createdAt = now;
+		this.updatedAt = now;
+	}
+
+	@PreUpdate
+	public void preUpdate() {
+		this.updatedAt = Instant.now();
+	}
 
 	public void setClassicAddress( Address classicAddress ) {
 		this.classicAddress = classicAddress.value();
