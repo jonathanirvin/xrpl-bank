@@ -22,6 +22,8 @@ import org.xrpl.xrpl4j.model.transactions.XAddress;
 @RequestMapping("/wallet")
 public class WalletController {
 
+	// TODO: This is not going to be used for the bank POC, but just keeping it here for reference 
+	// TODO: Eventually remove it
 	private static final boolean RIPPLE_LIVE = false;
 
 	@GetMapping("create")
@@ -74,4 +76,5 @@ public class WalletController {
 		}
 
 	}
+
 }

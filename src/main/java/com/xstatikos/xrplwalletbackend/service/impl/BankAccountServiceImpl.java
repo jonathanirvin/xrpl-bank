@@ -1,9 +1,11 @@
 package com.xstatikos.xrplwalletbackend.service.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.primitives.UnsignedInteger;
 import com.google.common.primitives.UnsignedLong;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountRequest;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
+import com.xstatikos.xrplwalletbackend.dto.TransactionRequest;
 import com.xstatikos.xrplwalletbackend.model.BankAccount;
 import com.xstatikos.xrplwalletbackend.repository.BankAccountRepository;
 import com.xstatikos.xrplwalletbackend.service.BankAccountService;
@@ -11,6 +13,7 @@ import okhttp3.HttpUrl;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.xrpl.xrpl4j.client.JsonRpcClientErrorException;
 import org.xrpl.xrpl4j.client.XrplClient;
 import org.xrpl.xrpl4j.client.faucet.FaucetClient;
 import org.xrpl.xrpl4j.client.faucet.FundAccountRequest;
@@ -75,6 +78,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 		xrplClient = new XrplClient( rippledHttpUrl );
 	}
 
+	@Override
 	public BankAccountResource createNewBankAccount( Long userId, BankAccountRequest bankAccountRequest ) throws Exception {
 		String walletIdentifier = "user-" + userId + "-" + UUID.randomUUID();
 
@@ -109,79 +113,134 @@ public class BankAccountServiceImpl implements BankAccountService {
 		return bankAccountResource;
 	}
 
+	@Override
+	public BankAccountResource transferXrpToXrpAddress( Long userId, TransactionRequest transactionRequest ) throws Exception {
+
+		// For now let's just get the first one
+		// Todo: pick a specific account by type or id
+		BankAccount bankAccount = bankAccountRepository.findByUserId( userId )
+				.stream()
+				.findFirst()
+				.orElseThrow( () -> new RuntimeException( "No bank account found for user" ) );
+
+		XrpCurrencyAmount amountOfXrpToSend = transactionRequest.getXrpCurrencyAmount();
+		sendXrpFromCustomerAddress( transactionRequest.getDestinationAddress(), bankAccount.getWalletIdentifier(), amountOfXrpToSend );
+
+		BankAccountResource bankAccountResource = new BankAccountResource();
+		bankAccountResource.setId( bankAccount.getId() );
+		bankAccountResource.setAccountType( bankAccount.getAccountType() );
+		bankAccountResource.setBalance( ( XrpCurrencyAmount.of( bankAccount.getBalance() ) ) );
+		bankAccountResource.setClassicAddress( bankAccount.getClassicAddress() );
+		bankAccountResource.setXAddress( bankAccount.getXAddress() );
+		bankAccountResource.setCreatedAt( bankAccount.getCreatedAt() );
+		bankAccountResource.setUpdatedAt( bankAccount.getUpdatedAt() );
+		return bankAccountResource;
+	}
+
 	private void fundNewCustomerAccountWithBankFeeFundForReserve( Address destinationAddress ) throws Exception {
 		try {
 
 			SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
-
 			PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankFeeFundWalletIdentifier );
-
-			// derive the public key from the wallet identifier
-			PublicKey bankFeeFundPublicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
-			Address bankFeeFundClassicAddress = bankFeeFundPublicKey.deriveAddress();
-
-			if ( !RIPPLE_LIVE && USE_FAUCET_FOR_BANK_FEE_FUND_WALLET ) {
-				FaucetClient faucetClient = FaucetClient.construct( HttpUrl.get( FAUCET_URL ) );
-				faucetClient.fundAccount( FundAccountRequest.of( bankFeeFundClassicAddress ) );
-				System.out.println( "Funded the account using the testnet faucet for address: " + bankFeeFundClassicAddress );
-			}
-
-			AccountInfoRequestParams accountInfoRequestParams = AccountInfoRequestParams.builder()
-					.account( bankFeeFundClassicAddress )
-					.ledgerSpecifier( LedgerSpecifier.VALIDATED ).build();
-
-			AccountRootObject accountRootObject = xrplClient.accountInfo( accountInfoRequestParams ).accountData();
-			UnsignedInteger sequence = accountRootObject.sequence();
-
-			System.out.println( "Bank Fee Fund Balance Before: " + accountRootObject.balance() );
-
-			// Request current fee info from rippled
-			FeeResult feeResult = xrplClient.fee();
-			XrpCurrencyAmount openLedgerFee = feeResult.drops().openLedgerFee();
-
-			// get the latest validated ledger index
-			LedgerIndex validatedLedgerIndex = xrplClient.ledger(
-					LedgerRequestParams.builder()
-							.ledgerSpecifier( LedgerSpecifier.VALIDATED )
-							.build()
-			).ledgerIndex().orElseThrow( () -> new RuntimeException( "LedgerIndex not available" ) );
-
-			// current ledger index + 4 
-			// 4 is a buffer to ensure that the transaction has enough time to be included in a validated ledger before it expires
-			// If the sequence gets passed 4, the transaction will expire
-			// This is to prevent an infinite pending state
-			// This gives a buffer of 16 seconds (4 ledgers) to validate (with 4 seconds per ledger) 
-			UnsignedInteger lastLedgerSequenceBeforeTransactionExpires = validatedLedgerIndex.plus( UnsignedInteger.valueOf( 4 ) ).unsignedIntegerValue();
-
-			Payment payment = Payment.builder()
-					.account( bankFeeFundClassicAddress )
-					.destination( destinationAddress )
-					.amount( XrpCurrencyAmount.ofXrp( BigDecimal.TEN ) )
-					.fee( openLedgerFee )
-					.sequence( sequence )
-					.lastLedgerSequence( lastLedgerSequenceBeforeTransactionExpires )
-					.signingPublicKey( bankFeeFundPublicKey )
-					.build();
-
-			// Sign the transaction
-			SingleSignedTransaction<Payment> signedPayment = derivedKeySignatureService.sign( privateKeyReference, payment );
-
-			System.out.println( "Signed Payment: " + signedPayment.signedTransaction() );
-
-			// Submit the transaction
-			SubmitResult<Payment> result = xrplClient.submit( signedPayment );
-
-			if ( !result.applied() ) {
-				throw new RuntimeException( result.toString() );
-			}
-
-			// todo log all transactions in the database
-			waitForTransactionValidation( bankFeeFundClassicAddress, signedPayment, lastLedgerSequenceBeforeTransactionExpires );
+			transferXrp( destinationAddress, derivedKeySignatureService, privateKeyReference, XrpCurrencyAmount.ofXrp( BigDecimal.TEN ) );
 
 		} catch ( Exception e ) {
 			throw new RuntimeException( "There was a problem funding the account with the reserve amount" + e );
 		}
 
+	}
+
+	private void sendXrpFromCustomerAddress( Address destinationAddress, String walletIdentifier, XrpCurrencyAmount amountOfXrpToSend ) throws Exception {
+		try {
+			SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> customerSecret );
+			PrivateKeyReference privateKeyReference = getPrivateKeyReference( walletIdentifier );
+			transferXrp( destinationAddress, derivedKeySignatureService, privateKeyReference, amountOfXrpToSend );
+
+		} catch ( Exception e ) {
+			throw new RuntimeException( "There was a problem submitting the payment" + e );
+		}
+
+	}
+
+	private void transferXrp( Address destinationAddress, SignatureService<PrivateKeyReference> derivedKeySignatureService, PrivateKeyReference privateKeyReference, XrpCurrencyAmount amountOfXrpToSend ) throws JsonRpcClientErrorException, JsonProcessingException {
+
+		// derive the public key from the wallet identifier
+		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
+		Address sourceAddress = publicKey.deriveAddress();
+
+
+		if ( !RIPPLE_LIVE && USE_FAUCET_FOR_BANK_FEE_FUND_WALLET ) {
+			FaucetClient faucetClient = FaucetClient.construct( HttpUrl.get( FAUCET_URL ) );
+			faucetClient.fundAccount( FundAccountRequest.of( sourceAddress ) );
+			System.out.println( "Funded the account using the testnet faucet for address: " + sourceAddress );
+		}
+
+		AccountRootObject accountRootObject = getAccountRootObject( sourceAddress );
+		UnsignedInteger sequence = accountRootObject.sequence();
+		System.out.println( "Source Address Balance Before Transaction: " + accountRootObject.balance() );
+
+		XrpCurrencyAmount openLedgerFee = getXrpLedgerFee();
+
+		UnsignedInteger lastLedgerSequenceBeforeTransactionExpires = getLastLedgerSequenceBeforeTransactionExpires();
+
+		Payment payment = Payment.builder()
+				.account( sourceAddress )
+				.destination( destinationAddress )
+				.amount( amountOfXrpToSend )
+				.fee( openLedgerFee )
+				.sequence( sequence )
+				.lastLedgerSequence( lastLedgerSequenceBeforeTransactionExpires )
+				.signingPublicKey( publicKey )
+				.build();
+
+		// Sign the transaction
+		SingleSignedTransaction<Payment> signedPayment = derivedKeySignatureService.sign( privateKeyReference, payment );
+		System.out.println( "Signed Payment: " + signedPayment.signedTransaction() );
+
+		// Submit the transaction
+		SubmitResult<Payment> result = xrplClient.submit( signedPayment );
+
+		if ( !result.applied() ) {
+			throw new RuntimeException( result.toString() );
+		}
+
+		waitForTransactionValidation( sourceAddress, signedPayment, lastLedgerSequenceBeforeTransactionExpires );
+
+		accountRootObject = getAccountRootObject( sourceAddress );
+		System.out.println( "Source Address Balance After Transaction: " + accountRootObject.balance() );
+	}
+
+	private UnsignedInteger getLastLedgerSequenceBeforeTransactionExpires() throws JsonRpcClientErrorException {
+		// get the latest validated ledger index
+		LedgerIndex validatedLedgerIndex = xrplClient.ledger(
+				LedgerRequestParams.builder()
+						.ledgerSpecifier( LedgerSpecifier.VALIDATED )
+						.build()
+		).ledgerIndex().orElseThrow( () -> new RuntimeException( "LedgerIndex not available" ) );
+
+		// current ledger index + 4 
+		// 4 is a buffer to ensure that the transaction has enough time to be included in a validated ledger before it expires
+		// If the sequence gets passed 4, the transaction will expire
+		// This is to prevent an infinite pending state
+		// This gives a buffer of 16 seconds (4 ledgers) to validate (with 4 seconds per ledger) 
+		UnsignedInteger lastLedgerSequenceBeforeTransactionExpires = validatedLedgerIndex.plus( UnsignedInteger.valueOf( 4 ) ).unsignedIntegerValue();
+		return lastLedgerSequenceBeforeTransactionExpires;
+	}
+
+	private XrpCurrencyAmount getXrpLedgerFee() throws JsonRpcClientErrorException {
+		// Request current fee info from rippled
+		FeeResult feeResult = xrplClient.fee();
+		XrpCurrencyAmount openLedgerFee = feeResult.drops().openLedgerFee();
+		return openLedgerFee;
+	}
+
+	private AccountRootObject getAccountRootObject( Address bankFeeFundClassicAddress ) throws JsonRpcClientErrorException {
+		AccountInfoRequestParams accountInfoRequestParams = AccountInfoRequestParams.builder()
+				.account( bankFeeFundClassicAddress )
+				.ledgerSpecifier( LedgerSpecifier.VALIDATED ).build();
+
+		AccountRootObject accountRootObject = xrplClient.accountInfo( accountInfoRequestParams ).accountData();
+		return accountRootObject;
 	}
 
 	@NotNull
