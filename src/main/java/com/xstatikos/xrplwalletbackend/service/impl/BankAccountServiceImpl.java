@@ -36,7 +36,9 @@ import org.xrpl.xrpl4j.model.client.transactions.TransactionResult;
 import org.xrpl.xrpl4j.model.immutables.FluentCompareTo;
 import org.xrpl.xrpl4j.model.ledger.AccountRootObject;
 import org.xrpl.xrpl4j.model.transactions.Address;
+import org.xrpl.xrpl4j.model.transactions.IssuedCurrencyAmount;
 import org.xrpl.xrpl4j.model.transactions.Payment;
+import org.xrpl.xrpl4j.model.transactions.TrustSet;
 import org.xrpl.xrpl4j.model.transactions.XAddress;
 import org.xrpl.xrpl4j.model.transactions.XrpCurrencyAmount;
 
@@ -54,6 +56,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 	private final String RIPPLED_URL;
 	private final String FAUCET_URL;
+	private final Address RLUSD_ISSUER_ADDRESS;
 
 	private final BankAccountRepository bankAccountRepository;
 	private final XrplClient xrplClient;
@@ -69,9 +72,11 @@ public class BankAccountServiceImpl implements BankAccountService {
 		if ( RIPPLE_LIVE ) {
 			// RIPPLED_URL = "https://s2.ripple.com:51234/"; // live rippled
 			// RIPPLED_URL = "http://localhost:5005/"; // live self-hosted rippled
+			// this.RLUSD_ISSUER_ADDRESS =Address.of( "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" );
 		} else {
 			this.RIPPLED_URL = "https://s.altnet.rippletest.net:51234/"; // Testnet
 			this.FAUCET_URL = "https://faucet.altnet.rippletest.net"; // Testnet
+			this.RLUSD_ISSUER_ADDRESS = Address.of( "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV" );
 		}
 
 		HttpUrl rippledHttpUrl = HttpUrl.get( RIPPLED_URL );
@@ -93,6 +98,8 @@ public class BankAccountServiceImpl implements BankAccountService {
 		// Assuming here that the bank will pay the reserve amount right now as part of the account creation
 		fundNewCustomerAccountWithBankFeeFundForReserve( customerClassicAddress );
 
+		addTrustLineToRlusd( derivedKeySignatureService, privateKeyReference, customerClassicAddress, publicKey );
+
 		BankAccount bankAccount = new BankAccount();
 		bankAccount.setClassicAddress( customerClassicAddress );
 		bankAccount.setXAddress( customerXAddress );
@@ -111,6 +118,43 @@ public class BankAccountServiceImpl implements BankAccountService {
 		bankAccountResource.setCreatedAt( bankAccount.getCreatedAt() );
 		bankAccountResource.setUpdatedAt( bankAccount.getUpdatedAt() );
 		return bankAccountResource;
+	}
+
+	private void addTrustLineToRlusd( SignatureService<PrivateKeyReference> derivedKeySignatureService, PrivateKeyReference privateKeyReference, Address customerClassicAddress, PublicKey customerPublicKey ) throws JsonRpcClientErrorException {
+		XrpCurrencyAmount openLedgerFee = getXrpLedgerFee();
+
+		AccountRootObject accountRootObject = getAccountRootObject( customerClassicAddress );
+		UnsignedInteger sequence = accountRootObject.sequence();
+
+		TrustSet trustSet = TrustSet.builder()
+				.account( customerClassicAddress )
+				.fee( openLedgerFee )
+				.signingPublicKey( customerPublicKey )
+				.sequence( sequence )
+				.limitAmount(
+						IssuedCurrencyAmount.builder()
+								.currency( "USD" )
+								.issuer( this.RLUSD_ISSUER_ADDRESS )
+								.value( "10000000" )
+								.build() )
+				.build();
+
+		SingleSignedTransaction<TrustSet> signedTrustSet = derivedKeySignatureService.sign( privateKeyReference, trustSet );
+		System.out.println( "Signed Trustset: " + signedTrustSet.signedTransaction() );
+
+		try {
+			// Submit the transaction
+			SubmitResult<TrustSet> result = xrplClient.submit( signedTrustSet );
+
+			if ( !result.applied() ) {
+				throw new RuntimeException( result.toString() );
+			}
+			// Todo: potentially add polling mechanism in the same way as payments  
+			System.out.println( "Trust line to RLUSD created successfully!" );
+		} catch ( Exception e ) {
+			throw new RuntimeException( "There was a problem creating the trust line: " + e );
+		}
+
 	}
 
 	@Override
