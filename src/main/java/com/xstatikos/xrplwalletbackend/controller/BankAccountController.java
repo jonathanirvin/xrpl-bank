@@ -2,6 +2,7 @@ package com.xstatikos.xrplwalletbackend.controller;
 
 import com.xstatikos.xrplwalletbackend.dto.BankAccountRequest;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
+import com.xstatikos.xrplwalletbackend.dto.DepositRequest;
 import com.xstatikos.xrplwalletbackend.dto.TransactionRequest;
 import com.xstatikos.xrplwalletbackend.dto.UserProfileResource;
 import com.xstatikos.xrplwalletbackend.service.BankAccountService;
@@ -46,8 +47,26 @@ public class BankAccountController {
 		}
 	}
 
+	@PostMapping("/deposit")
+	public ResponseEntity<BankAccountResource> deposit( @AuthenticationPrincipal UserDetails userDetails, @RequestBody @Valid DepositRequest depositRequest ) throws Exception {
+
+		if ( userDetails.isEnabled() && userDetails.getUsername() != null ) {
+
+			UserProfileResource userProfileResource = userProfileService.getUserByEmail( userDetails.getUsername() );
+			if ( userProfileResource != null ) {
+				BankAccountResource bankAccountResource = bankAccountService.deposit( userProfileResource.getId(), depositRequest );
+				return ResponseEntity.ok( bankAccountResource );
+			} else {
+				throw new AccessDeniedException( "User not found" );
+			}
+
+		} else {
+			throw new AccessDeniedException( "User not found" );
+		}
+	}
+
 	// Todo: Setup contacts and make it as easy as possible to add a sender account
-	// Todo: Setup loggins for transactions 
+	// Todo: Setup logins for transactions 
 	@PostMapping("/transfer-xrp-to-xrp-address")
 	public ResponseEntity<BankAccountResource> transferXrpToXrpAddress( @AuthenticationPrincipal UserDetails userDetails, @RequestBody @Valid TransactionRequest transactionRequest ) throws Exception {
 

@@ -2,9 +2,9 @@ package com.xstatikos.xrplwalletbackend.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.primitives.UnsignedInteger;
-import com.google.common.primitives.UnsignedLong;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountRequest;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
+import com.xstatikos.xrplwalletbackend.dto.DepositRequest;
 import com.xstatikos.xrplwalletbackend.dto.TransactionRequest;
 import com.xstatikos.xrplwalletbackend.model.BankAccount;
 import com.xstatikos.xrplwalletbackend.repository.BankAccountRepository;
@@ -88,6 +88,32 @@ public class BankAccountServiceImpl implements BankAccountService {
 	}
 
 	@Override
+	public BankAccountResource deposit( Long userId, DepositRequest depositRequest ) throws Exception {
+
+		BankAccount bankAccount = bankAccountRepository.findByUserId( userId )
+				.stream()
+				.findFirst()
+				.orElseThrow( () -> new RuntimeException( "No bank account found for user" ) );
+
+		// derive the public key from the wallet identifier
+		SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> customerSecret );
+
+		PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankAccount.getWalletIdentifier() );
+		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
+		Address customerClassicAddress = publicKey.deriveAddress();
+		
+		// Todo: Submit payment through Stripe, then issue bank's stablecoin
+		setColdWalletSettings( xrplClient );
+		addTrustLineToBankStablecoin( derivedKeySignatureService, privateKeyReference, bankAccount.getClassicAddress(), publicKey );
+		depositBankStablecoinFromBankFeeFund( customerClassicAddress, depositRequest.getAmountToDeposit() );
+
+		bankAccount.setBalance( depositRequest.getAmountToDeposit() );
+		return bankAccountRepository.save( bankAccount ).toResource();
+
+	}
+
+
+	@Override
 	public BankAccountResource createNewBankAccount( Long userId, BankAccountRequest bankAccountRequest ) throws Exception {
 		String walletIdentifier = "user-" + userId + "-" + UUID.randomUUID();
 
@@ -103,30 +129,15 @@ public class BankAccountServiceImpl implements BankAccountService {
 		// Assuming here that the bank will pay the reserve amount right now as part of the account creation
 		fundNewCustomerAccountWithBankFeeFundForReserve( customerClassicAddress );
 
-		// Todo: putting this in here to test. pull this out and create an endpoint
-		// Todo: Submit payment through Stripe, then issue bank's stablecoin
-		setColdWalletSettings( xrplClient );
-		addTrustLineToBankStablecoin( derivedKeySignatureService, privateKeyReference, customerClassicAddress, publicKey );
-		depositBankStablecoinFromBankFeeFund( customerClassicAddress );
-
 		BankAccount bankAccount = new BankAccount();
 		bankAccount.setClassicAddress( customerClassicAddress );
 		bankAccount.setXAddress( customerXAddress );
 		bankAccount.setWalletIdentifier( walletIdentifier );
 		bankAccount.setAccountType( bankAccountRequest.getAccountType() );
 		bankAccount.setUserId( userId );
-		bankAccount.setBalance( UnsignedLong.ZERO );
-		bankAccount = bankAccountRepository.save( bankAccount );
+		bankAccount.setBalance( BigDecimal.ZERO );
 
-		BankAccountResource bankAccountResource = new BankAccountResource();
-		bankAccountResource.setId( bankAccount.getId() );
-		bankAccountResource.setAccountType( bankAccount.getAccountType() );
-		bankAccountResource.setBalance( ( XrpCurrencyAmount.of( bankAccount.getBalance() ) ) );
-		bankAccountResource.setClassicAddress( bankAccount.getClassicAddress() );
-		bankAccountResource.setXAddress( bankAccount.getXAddress() );
-		bankAccountResource.setCreatedAt( bankAccount.getCreatedAt() );
-		bankAccountResource.setUpdatedAt( bankAccount.getUpdatedAt() );
-		return bankAccountResource;
+		return bankAccountRepository.save( bankAccount ).toResource();
 	}
 
 	private void addTrustLineToBankStablecoin( SignatureService<PrivateKeyReference> derivedKeySignatureService, PrivateKeyReference privateKeyReference, Address customerClassicAddress, PublicKey customerPublicKey ) throws JsonRpcClientErrorException {
@@ -182,15 +193,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 		XrpCurrencyAmount amountOfXrpToSend = transactionRequest.getXrpCurrencyAmount();
 		sendXrpFromCustomerAddress( transactionRequest.getDestinationAddress(), bankAccount.getWalletIdentifier(), amountOfXrpToSend );
 
-		BankAccountResource bankAccountResource = new BankAccountResource();
-		bankAccountResource.setId( bankAccount.getId() );
-		bankAccountResource.setAccountType( bankAccount.getAccountType() );
-		bankAccountResource.setBalance( ( XrpCurrencyAmount.of( bankAccount.getBalance() ) ) );
-		bankAccountResource.setClassicAddress( bankAccount.getClassicAddress() );
-		bankAccountResource.setXAddress( bankAccount.getXAddress() );
-		bankAccountResource.setCreatedAt( bankAccount.getCreatedAt() );
-		bankAccountResource.setUpdatedAt( bankAccount.getUpdatedAt() );
-		return bankAccountResource;
+		return bankAccount.toResource();
 	}
 
 	private void fundNewCustomerAccountWithBankFeeFundForReserve( Address destinationAddress ) throws Exception {
@@ -207,15 +210,13 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 	}
 
-	private void depositBankStablecoinFromBankFeeFund( Address destinationAddress ) throws Exception {
+	private void depositBankStablecoinFromBankFeeFund( Address destinationAddress, BigDecimal amountToDeposit ) throws Exception {
 		try {
 
 			SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
 			PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankFeeFundWalletIdentifier );
 
-			transferBankStablecoin( destinationAddress, derivedKeySignatureService, privateKeyReference, XrpCurrencyAmount.ofXrp( BigDecimal.TEN ) );
-
-			// swapXrpForBankStablecoin( destinationAddress, derivedKeySignatureService, privateKeyReference, XrpCurrencyAmount.ofXrp( BigDecimal.TEN ) );
+			transferBankStablecoin( destinationAddress, derivedKeySignatureService, privateKeyReference, amountToDeposit );
 
 		} catch ( Exception e ) {
 			throw new RuntimeException( "There was a problem funding the account with Bank's Stablecoin" + e );
@@ -368,7 +369,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 	}
 
-	private void transferBankStablecoin( Address destinationAddress, SignatureService<PrivateKeyReference> derivedKeySignatureService, PrivateKeyReference privateKeyReference, XrpCurrencyAmount amountOfXrpToSend ) throws JsonRpcClientErrorException, JsonProcessingException {
+	private void transferBankStablecoin( Address destinationAddress, SignatureService<PrivateKeyReference> derivedKeySignatureService, PrivateKeyReference privateKeyReference, BigDecimal amountToDeposit ) throws JsonRpcClientErrorException, JsonProcessingException {
 
 		// derive the public key from the wallet identifier
 		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
@@ -388,7 +389,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 				.amount( IssuedCurrencyAmount.builder()
 						.currency( convertCurrencyCodeToHex( this.STABLECOIN_CURRENCY_CODE ) )
 						.issuer( sourceAddress )
-						.value( "50" )
+						.value( amountToDeposit.toString() )
 						.build() )
 				.fee( openLedgerFee )
 				.sequence( sequence )
@@ -561,9 +562,9 @@ public class BankAccountServiceImpl implements BankAccountService {
 		return openLedgerFee;
 	}
 
-	private AccountRootObject getAccountRootObject( Address bankFeeFundClassicAddress ) throws JsonRpcClientErrorException {
+	private AccountRootObject getAccountRootObject( Address address ) throws JsonRpcClientErrorException {
 		AccountInfoRequestParams accountInfoRequestParams = AccountInfoRequestParams.builder()
-				.account( bankFeeFundClassicAddress )
+				.account( address )
 				.ledgerSpecifier( LedgerSpecifier.VALIDATED ).build();
 
 		AccountRootObject accountRootObject = xrplClient.accountInfo( accountInfoRequestParams ).accountData();

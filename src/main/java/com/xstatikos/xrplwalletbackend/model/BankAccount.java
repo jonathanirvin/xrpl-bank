@@ -1,6 +1,6 @@
 package com.xstatikos.xrplwalletbackend.model;
 
-import com.google.common.primitives.UnsignedLong;
+import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -17,6 +17,7 @@ import lombok.Setter;
 import org.xrpl.xrpl4j.model.transactions.Address;
 import org.xrpl.xrpl4j.model.transactions.XAddress;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 @Setter
@@ -47,7 +48,7 @@ public class BankAccount {
 	private String xAddress;
 
 	@Column(nullable = false)
-	private UnsignedLong balance;
+	private BigDecimal balance;
 
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
@@ -81,6 +82,19 @@ public class BankAccount {
 
 	public XAddress getXAddress() {
 		return XAddress.of( this.xAddress );
+	}
+
+	public BankAccountResource toResource() {
+		return BankAccountResource.builder()
+				.id( id )
+				.userId( id )
+				.balance( balance )
+				.accountType( accountType )
+				.classicAddress( Address.of( classicAddress ) )
+				.xAddress( XAddress.of( xAddress ) )
+				.createdAt( createdAt )
+				.updatedAt( updatedAt )
+				.build();
 	}
 
 }
