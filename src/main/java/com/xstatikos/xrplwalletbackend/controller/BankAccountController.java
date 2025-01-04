@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/bank-accounts")
 public class BankAccountController {
@@ -48,18 +51,19 @@ public class BankAccountController {
 	}
 
 	@PostMapping("/deposit")
-	public ResponseEntity<BankAccountResource> deposit( @AuthenticationPrincipal UserDetails userDetails, @RequestBody @Valid DepositRequest depositRequest ) throws Exception {
+	public ResponseEntity<Map<String, String>> deposit( @AuthenticationPrincipal UserDetails userDetails, @RequestBody @Valid DepositRequest depositRequest ) throws Exception {
 
 		if ( userDetails.isEnabled() && userDetails.getUsername() != null ) {
-
 			UserProfileResource userProfileResource = userProfileService.getUserByEmail( userDetails.getUsername() );
 			if ( userProfileResource != null ) {
-				BankAccountResource bankAccountResource = bankAccountService.deposit( userProfileResource.getId(), depositRequest );
-				return ResponseEntity.ok( bankAccountResource );
+				String stripeClientSecret = bankAccountService.depositStripe( userProfileResource.getId(), userProfileResource.getEmail(), depositRequest );
+
+				Map<String, String> response = new HashMap<>();
+				response.put( "clientSecret", stripeClientSecret );
+				return ResponseEntity.ok( response );
 			} else {
 				throw new AccessDeniedException( "User not found" );
 			}
-
 		} else {
 			throw new AccessDeniedException( "User not found" );
 		}

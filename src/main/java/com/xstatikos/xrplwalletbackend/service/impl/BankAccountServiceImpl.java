@@ -2,6 +2,10 @@ package com.xstatikos.xrplwalletbackend.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.primitives.UnsignedInteger;
+import com.stripe.StripeClient;
+import com.stripe.exception.StripeException;
+import com.stripe.model.PaymentIntent;
+import com.stripe.param.PaymentIntentCreateParams;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountRequest;
 import com.xstatikos.xrplwalletbackend.dto.BankAccountResource;
 import com.xstatikos.xrplwalletbackend.dto.DepositRequest;
@@ -54,6 +58,9 @@ public class BankAccountServiceImpl implements BankAccountService {
 	@Value("${app.bank-fee-fund-wallet-identifier}")
 	private String bankFeeFundWalletIdentifier;
 
+	@Value("${stripe.secret-key}")
+	private String secretKey;
+
 	private static final boolean RIPPLE_LIVE = false;
 	private static final boolean USE_FAUCET_FOR_BANK_FEE_FUND_WALLET = false;
 
@@ -87,9 +94,9 @@ public class BankAccountServiceImpl implements BankAccountService {
 		xrplClient = new XrplClient( rippledHttpUrl );
 	}
 
+	// TODO: call this from the Stripe Webhook (create new endpoint for that)
 	@Override
-	public BankAccountResource deposit( Long userId, DepositRequest depositRequest ) throws Exception {
-
+	public BankAccountResource depositStablecoin( Long userId, BigDecimal amountToDeposit ) throws Exception {
 		BankAccount bankAccount = bankAccountRepository.findByUserId( userId )
 				.stream()
 				.findFirst()
@@ -101,17 +108,46 @@ public class BankAccountServiceImpl implements BankAccountService {
 		PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankAccount.getWalletIdentifier() );
 		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
 		Address customerClassicAddress = publicKey.deriveAddress();
-		
-		// Todo: Submit payment through Stripe, then issue bank's stablecoin
+
+		// Issue an IOU Bank Stablecoin in the amount of the Stripe Deposit  
 		setColdWalletSettings( xrplClient );
 		addTrustLineToBankStablecoin( derivedKeySignatureService, privateKeyReference, bankAccount.getClassicAddress(), publicKey );
-		depositBankStablecoinFromBankFeeFund( customerClassicAddress, depositRequest.getAmountToDeposit() );
+		depositBankStablecoinFromBankFeeFund( customerClassicAddress, amountToDeposit );
 
-		bankAccount.setBalance( depositRequest.getAmountToDeposit() );
+		bankAccount.setBalance( amountToDeposit );
 		return bankAccountRepository.save( bankAccount ).toResource();
-
 	}
 
+	@Override
+	public String depositStripe( Long userId, String username, DepositRequest depositRequest ) throws Exception {
+
+		try {
+			StripeClient stripeClient = new StripeClient( secretKey );
+
+			// The user’s requested amount is in cents (e.g. 5000 for $50)
+			long amountInCents = depositRequest.getAmountToDeposit();
+
+			PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+					.setAmount( amountInCents )
+					.setCurrency( "usd" )
+					.setReceiptEmail( depositRequest.getEmail() ) // optional
+					// Enable "Automatic Payment Methods" so the front end can confirm with any saved card
+					.setAutomaticPaymentMethods(
+							PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
+									.setEnabled( true )
+									.build()
+					)
+					.putMetadata( "userEmail", username )
+					.putMetadata( "customerName", depositRequest.getCustomerName() != null ? depositRequest.getCustomerName() : "" )
+					.build();
+
+			PaymentIntent paymentIntent = stripeClient.paymentIntents().create( params );
+			return paymentIntent.getClientSecret();
+		} catch ( StripeException e ) {
+			throw new RuntimeException( "Error creating Stripe PaymentIntent: " + e.getMessage(), e );
+		}
+
+	}
 
 	@Override
 	public BankAccountResource createNewBankAccount( Long userId, BankAccountRequest bankAccountRequest ) throws Exception {
