@@ -62,7 +62,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 	private String secretKey;
 
 	private static final boolean RIPPLE_LIVE = false;
-	private static final boolean USE_FAUCET_FOR_BANK_FEE_FUND_WALLET = false;
+	private static final boolean USE_FAUCET_FOR_BANK_FEE_FUND_WALLET = true;
 
 	private final String RIPPLED_URL;
 	private final String FAUCET_URL;
@@ -94,7 +94,6 @@ public class BankAccountServiceImpl implements BankAccountService {
 		xrplClient = new XrplClient( rippledHttpUrl );
 	}
 
-	// TODO: call this from the Stripe Webhook (create new endpoint for that)
 	@Override
 	public BankAccountResource depositStablecoin( Long userId, BigDecimal amountToDeposit ) throws Exception {
 		BankAccount bankAccount = bankAccountRepository.findByUserId( userId )
@@ -105,16 +104,20 @@ public class BankAccountServiceImpl implements BankAccountService {
 		// derive the public key from the wallet identifier
 		SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> customerSecret );
 
+		// TODO - there is some type of race condtion. had to set a breakpoint here in order for things to work
 		PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankAccount.getWalletIdentifier() );
 		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
 		Address customerClassicAddress = publicKey.deriveAddress();
 
-		// Issue an IOU Bank Stablecoin in the amount of the Stripe Deposit  
+		// TODO: This is for the bank issuer account and only needs to happen once.
+		// Right now it's called during every deposit
 		setColdWalletSettings( xrplClient );
-		addTrustLineToBankStablecoin( derivedKeySignatureService, privateKeyReference, bankAccount.getClassicAddress(), publicKey );
+
+		// Issue an IOU Bank Stablecoin in the amount of the Stripe Deposit 
+		addTrustLineToBankStablecoin( derivedKeySignatureService, privateKeyReference, customerClassicAddress, publicKey );
 		depositBankStablecoinFromBankFeeFund( customerClassicAddress, amountToDeposit );
 
-		bankAccount.setBalance( amountToDeposit );
+		bankAccount.setBalance( bankAccount.getBalance().add( amountToDeposit ) );
 		return bankAccountRepository.save( bankAccount ).toResource();
 	}
 
@@ -138,6 +141,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 									.build()
 					)
 					.putMetadata( "userEmail", username )
+					.putMetadata( "userId", String.valueOf( userId ) )
 					.putMetadata( "customerName", depositRequest.getCustomerName() != null ? depositRequest.getCustomerName() : "" )
 					.build();
 
@@ -160,7 +164,6 @@ public class BankAccountServiceImpl implements BankAccountService {
 		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
 		Address customerClassicAddress = publicKey.deriveAddress();
 		XAddress customerXAddress = AddressCodec.getInstance().classicAddressToXAddress( customerClassicAddress, RIPPLE_LIVE );
-
 
 		// Assuming here that the bank will pay the reserve amount right now as part of the account creation
 		fundNewCustomerAccountWithBankFeeFundForReserve( customerClassicAddress );

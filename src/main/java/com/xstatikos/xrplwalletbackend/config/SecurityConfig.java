@@ -62,6 +62,8 @@ public class SecurityConfig {
 				.cors( cors -> cors.configurationSource( corsConfigurationSource() ) )
 				.authorizeHttpRequests( auth -> auth
 						.requestMatchers( "/auth/**" ).permitAll()
+						.requestMatchers( "/bank-accounts/payment-succeeded-webhook" ).permitAll()
+
 						.anyRequest().authenticated()
 				)
 
@@ -76,4 +78,5 @@ public class SecurityConfig {
 		authBuilder.authenticationProvider( daoAuthProvider() );
 		return authBuilder.build();
 	}
+
 }
