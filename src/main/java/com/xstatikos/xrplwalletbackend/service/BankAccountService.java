@@ -16,4 +16,6 @@ public interface BankAccountService {
 
 	BankAccountResource depositStablecoin( Long userId, BigDecimal amountToDeposit ) throws Exception;
 
+	void setColdWalletSettings() throws Exception;
+
 }

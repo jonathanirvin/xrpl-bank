@@ -15,8 +15,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -76,6 +78,18 @@ public class BankAccountController {
 		} else {
 			throw new AccessDeniedException( "User not found" );
 		}
+	}
+
+	@PutMapping("/set-cold-wallet-issuer-settings")
+	public ResponseEntity<Void> setColdWalletIssuerSettings( @AuthenticationPrincipal UserDetails userDetails ) throws Exception {
+
+		if ( userDetails.isEnabled() && userDetails.getAuthorities().contains( new SimpleGrantedAuthority( "ROLE_ADMIN" ) ) ) {
+			bankAccountService.setColdWalletSettings();
+		} else {
+			throw new AccessDeniedException( "User doesn't have access" );
+		}
+
+		return ResponseEntity.noContent().build();
 	}
 
 	@PostMapping("/payment-succeeded-webhook")

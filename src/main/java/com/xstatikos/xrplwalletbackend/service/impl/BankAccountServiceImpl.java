@@ -16,6 +16,7 @@ import com.xstatikos.xrplwalletbackend.service.BankAccountService;
 import okhttp3.HttpUrl;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.xrpl.xrpl4j.client.JsonRpcClientErrorException;
 import org.xrpl.xrpl4j.client.XrplClient;
@@ -45,6 +46,7 @@ import org.xrpl.xrpl4j.model.transactions.Address;
 import org.xrpl.xrpl4j.model.transactions.IssuedCurrencyAmount;
 import org.xrpl.xrpl4j.model.transactions.OfferCreate;
 import org.xrpl.xrpl4j.model.transactions.Payment;
+import org.xrpl.xrpl4j.model.transactions.Transaction;
 import org.xrpl.xrpl4j.model.transactions.TrustSet;
 import org.xrpl.xrpl4j.model.transactions.XAddress;
 import org.xrpl.xrpl4j.model.transactions.XrpCurrencyAmount;
@@ -62,9 +64,8 @@ public class BankAccountServiceImpl implements BankAccountService {
 	private String secretKey;
 
 	private static final boolean RIPPLE_LIVE = false;
-	private static final boolean USE_FAUCET_FOR_BANK_FEE_FUND_WALLET = true;
+	private static final boolean USE_FAUCET_FOR_BANK_FEE_FUND_WALLET = false;
 
-	private final String RIPPLED_URL;
 	private final String FAUCET_URL;
 	private final Address RLUSD_ISSUER_ADDRESS;
 	private final String STABLECOIN_CURRENCY_CODE = "XBANKCOIN";
@@ -75,23 +76,14 @@ public class BankAccountServiceImpl implements BankAccountService {
 	private final ServerSecret customerSecret;
 	private final ServerSecret bankFeeFundSecret;
 
-	public BankAccountServiceImpl( BankAccountRepository bankAccountRepository, ServerSecret customerSecret, ServerSecret bankFeeFundSecret ) {
+	public BankAccountServiceImpl( BankAccountRepository bankAccountRepository, XrplClient xrplClient, ServerSecret customerSecret, ServerSecret bankFeeFundSecret ) {
 		this.bankAccountRepository = bankAccountRepository;
 		this.customerSecret = customerSecret;
 		this.bankFeeFundSecret = bankFeeFundSecret;
+		this.xrplClient = xrplClient;
 
-		if ( RIPPLE_LIVE ) {
-			// RIPPLED_URL = "https://s2.ripple.com:51234/"; // live rippled
-			// RIPPLED_URL = "http://localhost:5005/"; // live self-hosted rippled
-			// this.RLUSD_ISSUER_ADDRESS =Address.of( "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" );
-		} else {
-			this.RIPPLED_URL = "https://s.altnet.rippletest.net:51234/"; // Testnet
-			this.FAUCET_URL = "https://faucet.altnet.rippletest.net"; // Testnet
-			this.RLUSD_ISSUER_ADDRESS = Address.of( "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV" );
-		}
-
-		HttpUrl rippledHttpUrl = HttpUrl.get( RIPPLED_URL );
-		xrplClient = new XrplClient( rippledHttpUrl );
+		this.FAUCET_URL = "https://faucet.altnet.rippletest.net"; // Testnet
+		this.RLUSD_ISSUER_ADDRESS = Address.of( "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV" );
 	}
 
 	@Override
@@ -104,18 +96,15 @@ public class BankAccountServiceImpl implements BankAccountService {
 		// derive the public key from the wallet identifier
 		SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> customerSecret );
 
-		// TODO - there is some type of race condtion. had to set a breakpoint here in order for things to work
+		// TODO - this fails for NoAccount on the first time it's called after the server starts but never during subsequent calls
+		// TODO: stripe listen --forward-to http://localhost:8080/bank-accounts/payment-succeeded-webhook
 		PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankAccount.getWalletIdentifier() );
 		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
 		Address customerClassicAddress = publicKey.deriveAddress();
 
-		// TODO: This is for the bank issuer account and only needs to happen once.
-		// Right now it's called during every deposit
-		setColdWalletSettings( xrplClient );
-
 		// Issue an IOU Bank Stablecoin in the amount of the Stripe Deposit 
 		addTrustLineToBankStablecoin( derivedKeySignatureService, privateKeyReference, customerClassicAddress, publicKey );
-		depositBankStablecoinFromBankFeeFund( customerClassicAddress, amountToDeposit );
+		depositBankStablecoin( customerClassicAddress, amountToDeposit );
 
 		bankAccount.setBalance( bankAccount.getBalance().add( amountToDeposit ) );
 		return bankAccountRepository.save( bankAccount ).toResource();
@@ -187,7 +176,6 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 		UnsignedInteger lastLedgerSequenceBeforeTransactionExpires = getLastLedgerSequenceBeforeTransactionExpires();
 
-
 		SignatureService<PrivateKeyReference> derivedBankKeySignatureService = new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
 		PrivateKeyReference bankPrivateKeyReference = getPrivateKeyReference( bankFeeFundWalletIdentifier );
 
@@ -245,20 +233,6 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 		} catch ( Exception e ) {
 			throw new RuntimeException( "There was a problem funding the account with the reserve amount" + e );
-		}
-
-	}
-
-	private void depositBankStablecoinFromBankFeeFund( Address destinationAddress, BigDecimal amountToDeposit ) throws Exception {
-		try {
-
-			SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
-			PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankFeeFundWalletIdentifier );
-
-			transferBankStablecoin( destinationAddress, derivedKeySignatureService, privateKeyReference, amountToDeposit );
-
-		} catch ( Exception e ) {
-			throw new RuntimeException( "There was a problem funding the account with Bank's Stablecoin" + e );
 		}
 
 	}
@@ -408,7 +382,11 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 	}
 
-	private void transferBankStablecoin( Address destinationAddress, SignatureService<PrivateKeyReference> derivedKeySignatureService, PrivateKeyReference privateKeyReference, BigDecimal amountToDeposit ) throws JsonRpcClientErrorException, JsonProcessingException {
+	private void depositBankStablecoin( Address destinationAddress, BigDecimal amountToDeposit ) throws JsonRpcClientErrorException, JsonProcessingException {
+
+		// Bank issuer wallet
+		SignatureService<PrivateKeyReference> derivedKeySignatureService = new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
+		PrivateKeyReference privateKeyReference = getPrivateKeyReference( bankFeeFundWalletIdentifier );
 
 		// derive the public key from the wallet identifier
 		PublicKey publicKey = derivedKeySignatureService.derivePublicKey( privateKeyReference );
@@ -471,7 +449,8 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 	}
 
-	private void setColdWalletSettings( XrplClient xrplClient ) {
+	@PreAuthorize("hasRole('ROLE_ADMIN')")
+	public void setColdWalletSettings() {
 
 		try {
 			SignatureService<PrivateKeyReference> derivedBankKeySignatureService = new BcDerivedKeySignatureService( () -> bankFeeFundSecret );
@@ -503,7 +482,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 			System.out.println( "Signed Payment: " + signedAccountSet.signedTransaction() );
 
 			try {
-				submitAndWaitForValidation( signedAccountSet, xrplClient, Payment.class );
+				submitAndWaitForValidation( signedAccountSet, xrplClient, AccountSet.class );
 			} catch ( Exception e ) {
 				throw new RuntimeException( "There was an issue with submitting and validating the transaction: " + e );
 			}
@@ -514,8 +493,7 @@ public class BankAccountServiceImpl implements BankAccountService {
 
 	}
 
-	// TODO: pick back up with T and transactionClass below
-	private static <T> void submitAndWaitForValidation( SingleSignedTransaction<?> signedTransaction, XrplClient xrplClient, Class<T> transactionClass )
+	private static <T extends Transaction> void submitAndWaitForValidation( SingleSignedTransaction<T> signedTransaction, XrplClient xrplClient, Class<T> transactionClass )
 			throws InterruptedException, JsonRpcClientErrorException, JsonProcessingException {
 
 		xrplClient.submit( signedTransaction );
@@ -532,9 +510,9 @@ public class BankAccountServiceImpl implements BankAccountService {
 							new RuntimeException( "Ledger response did not contain a LedgerIndex." )
 					);
 
-			TransactionResult<Payment> transactionResult = xrplClient.transaction(
+			TransactionResult<T> transactionResult = xrplClient.transaction(
 					TransactionRequestParams.of( signedTransaction.hash() ),
-					Payment.class
+					transactionClass
 			);
 
 			if ( transactionResult.validated() ) {
@@ -624,57 +602,6 @@ public class BankAccountServiceImpl implements BankAccountService {
 			}
 		};
 		return privateKeyReference;
-	}
-
-	// Since results are tentative, we'll need a polling mechanism in place to grab transaction results as they're finalized    
-	private boolean waitForTransactionValidation( Address senderAddress, SingleSignedTransaction<Payment> signedPayment, UnsignedInteger lastLedgerSequenceBeforeTransactionExpires ) {
-		TransactionResult<Payment> transactionResult = null;
-
-		boolean transactionValidated = false;
-		boolean transactionExpired = false;
-		while ( !transactionValidated && !transactionExpired ) {
-			try {
-				Thread.sleep( 4000 );
-				LedgerIndex latestValidatedLedgerIndex = xrplClient.ledger(
-						LedgerRequestParams.builder()
-								.ledgerSpecifier( LedgerSpecifier.VALIDATED )
-								.build()
-				).ledgerIndex().orElseThrow( () -> new RuntimeException( "The ledger response did not contain a LedgerIndex" ) );
-
-				transactionResult = xrplClient.transaction( TransactionRequestParams.of( signedPayment.hash() ), Payment.class );
-
-				if ( transactionResult.validated() ) {
-					System.out.println( "Payment was validated with result code: " + transactionResult.metadata().get().transactionResult() );
-
-					System.out.println( "Full Transaction Result: " + transactionResult.toString() );
-
-					AccountInfoRequestParams accountInfoRequestParams = AccountInfoRequestParams.builder()
-							.account( senderAddress )
-							.ledgerSpecifier( LedgerSpecifier.VALIDATED ).build();
-
-					XrpCurrencyAmount senderBalance = xrplClient.accountInfo( accountInfoRequestParams ).accountData().balance();
-
-					System.out.println( "Sender balance is now " + senderBalance );
-
-					transactionValidated = true;
-				} else {
-					boolean lastLedgerSequenceHasPassed = FluentCompareTo.is( latestValidatedLedgerIndex.unsignedIntegerValue() )
-							.greaterThan( UnsignedInteger.valueOf( lastLedgerSequenceBeforeTransactionExpires.intValue() ) );
-
-					if ( lastLedgerSequenceHasPassed ) {
-						System.out.println( "Last ledger sequence has passed. Assuming Expiration for now. Last transaction response: " + transactionResult );
-						transactionExpired = true;
-					} else {
-						System.out.println( "Payment not yet validated" );
-					}
-				}
-			} catch ( Exception e ) {
-				System.out.println( "There was a problem validating the ledger: " + e );
-			}
-
-
-		}
-		return true;
 	}
 
 }
